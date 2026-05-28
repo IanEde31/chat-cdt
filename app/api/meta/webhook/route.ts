@@ -198,8 +198,6 @@ async function handleInboundMessage(
   // download assíncrono pro bucket. NÃO bloqueia: o operador já vê a row
   // imediatamente; quando a mídia terminar, payload ganha media.storage_path
   // e Realtime UPDATE atualiza a UI.
-  //
-  // URL da Meta expira em ~5min, então é importante começar logo.
   const media = extractMediaInfo(
     msg as unknown as Record<string, unknown>,
     msg.type
@@ -217,10 +215,19 @@ async function persistInboundMedia(
   originalPayload: WebhookMessage
 ) {
   if (!media) return
+  const accessToken = process.env.META_SYSTEM_USER_TOKEN
+  const apiVersion = process.env.META_GRAPH_VERSION ?? 'v22.0'
+  if (!accessToken) {
+    console.error('[webhook] META_SYSTEM_USER_TOKEN missing — pulando mídia')
+    return
+  }
+
   const result = await downloadAndStore(supabase, {
     conversationId,
     waMessageId,
     media,
+    accessToken,
+    apiVersion,
   })
 
   if ('error' in result) {
@@ -232,6 +239,12 @@ async function persistInboundMedia(
     )
     return
   }
+  console.log(
+    '[webhook] media stored',
+    waMessageId,
+    media.type,
+    result.storage_path
+  )
 
   // Adiciona storage_path dentro do sub-objeto da mídia
   // (payload.image / payload.audio / etc), preservando o resto.

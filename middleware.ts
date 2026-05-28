@@ -17,6 +17,10 @@ function isPublic(pathname: string) {
   if (PUBLIC_PATHS.includes(pathname)) return true
   if (pathname.startsWith('/_next')) return true
   if (pathname.startsWith('/api/meta/')) return true
+  // Endpoints internos (push/notify, media/backfill, cron/*) têm auth via
+  // CRON_SECRET header — não pelo cookie do usuário. Deixa passar.
+  if (pathname.startsWith('/api/internal/')) return true
+  if (pathname.startsWith('/api/cron/')) return true
   return false
 }
 

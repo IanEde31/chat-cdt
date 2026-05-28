@@ -95,14 +95,15 @@ export function buildStoragePath(
 }
 
 /**
- * Baixa a URL da Meta (lookaside) e sobe pro bucket. Retorna o path no
- * Storage. Idempotente — `upsert: true` permite re-tentativa sem erro.
+ * Baixa mídia da Meta via fluxo CANÔNICO (matches n8n):
+ *   1. GET graph.facebook.com/{v}/{media_id} com Bearer → { url, ... }
+ *   2. GET <url retornada> com Bearer → bytes
  *
- * A URL lookaside tem hash assinado e dispensa Bearer token, mas expira em
- * ~5 minutos. Por isso o caller (webhook) deve chamar AGORA, não depois.
+ * Por que NÃO usar a URL direta do payload do webhook: a URL `lookaside.fbsbx.com`
+ * embutida no payload PARECE pública (tem hash assinado), mas a Meta exige
+ * Bearer em ambas as chamadas. Tentar sem Bearer dá 401 silencioso.
  *
- * Limites: ignora arquivo > 50MB (paranoia contra ataque/abuse) — embora
- * o bucket permita até 100MB.
+ * Upload é idempotente (`upsert: true`). Tamanho máximo 50MB (paranoia).
  */
 export async function downloadAndStore(
   serviceSupabase: SupabaseClient,
@@ -110,32 +111,57 @@ export async function downloadAndStore(
     conversationId: string
     waMessageId: string
     media: MediaInfo
+    accessToken: string
+    apiVersion?: string
   }
 ): Promise<{ storage_path: string } | { error: string }> {
-  const { conversationId, waMessageId, media } = args
+  const { conversationId, waMessageId, media, accessToken } = args
+  const apiVersion = args.apiVersion ?? 'v22.0'
   const path = buildStoragePath(conversationId, waMessageId, media.mime_type)
+  const authHeader = { Authorization: `Bearer ${accessToken}` }
 
   try {
-    const res = await fetch(media.url, {
-      // Tentamos sem Bearer porque lookaside.fbsbx.com aceita hash assinado.
-      // Caso Meta mude o contrato, plugar fallback Graph aqui.
+    // Etapa 1 — descobrir a URL real (a do payload pode estar expirada e/ou
+    // exige Bearer mesmo assim). A media_id é estável por ~30 dias.
+    const metaRes = await fetch(
+      `https://graph.facebook.com/${apiVersion}/${media.id}`,
+      { headers: authHeader }
+    )
+    if (!metaRes.ok) {
+      const txt = await metaRes.text().catch(() => '')
+      return {
+        error: `graph metadata ${metaRes.status}: ${txt.slice(0, 200)}`,
+      }
+    }
+    const metaJson = (await metaRes.json()) as {
+      url?: string
+      mime_type?: string
+    }
+    if (!metaJson.url) {
+      return { error: 'graph metadata missing url' }
+    }
+
+    // Etapa 2 — baixar bytes (Bearer também).
+    const dlRes = await fetch(metaJson.url, {
+      headers: authHeader,
       redirect: 'follow',
     })
-    if (!res.ok) {
-      return { error: `meta fetch ${res.status}` }
+    if (!dlRes.ok) {
+      return { error: `download ${dlRes.status}` }
     }
 
-    const contentLength = Number(res.headers.get('content-length') ?? '0')
-    if (contentLength > 50 * 1024 * 1024) {
-      return { error: `too large (${contentLength} bytes)` }
+    const bytes = new Uint8Array(await dlRes.arrayBuffer())
+    if (bytes.byteLength > 50 * 1024 * 1024) {
+      return { error: `too large (${bytes.byteLength} bytes)` }
     }
-
-    const bytes = new Uint8Array(await res.arrayBuffer())
+    if (bytes.byteLength === 0) {
+      return { error: 'empty body' }
+    }
 
     const { error: upErr } = await serviceSupabase.storage
       .from(MEDIA_BUCKET)
       .upload(path, bytes, {
-        contentType: media.mime_type,
+        contentType: metaJson.mime_type ?? media.mime_type,
         upsert: true,
       })
 
