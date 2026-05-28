@@ -3,11 +3,14 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
 import { InboxClient, type ConversationListItem } from './inbox-client'
-import { TabsBar, type InboxTab } from './tabs-bar'
+import { TabsBar, type InboxTab, type UnitOption } from './tabs-bar'
 
 const VALID_TABS: InboxTab[] = ['queued', 'mine', 'all', 'closed']
 
-type SearchParams = { tab?: string | string[] }
+type SearchParams = {
+  tab?: string | string[]
+  unit?: string | string[]
+}
 
 export default async function InboxPage({
   searchParams,
@@ -20,6 +23,9 @@ export default async function InboxPage({
     ? (rawTab as InboxTab)
     : 'queued'
 
+  const rawUnit = Array.isArray(sp.unit) ? sp.unit[0] : sp.unit
+  const requestedUnitId = rawUnit && rawUnit.length > 0 ? rawUnit : null
+
   const supabase = await createClient()
   const {
     data: { user },
@@ -29,11 +35,28 @@ export default async function InboxPage({
     redirect('/login')
   }
 
+  // Unidades às quais este operador tem acesso (via user_units → profiles).
+  // RLS já restringe; o select aqui só puxa o que o operador pode ver.
+  const { data: unitRows } = await supabase
+    .from('user_units')
+    .select('units!inner(id, code, name)')
+
+  const units: UnitOption[] = (unitRows ?? [])
+    .map((r) => (r as unknown as { units: UnitOption }).units)
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+
+  // Defensivo: ignora ?unit= se não estiver na lista do operador.
+  const effectiveUnitId =
+    requestedUnitId && units.some((u) => u.id === requestedUnitId)
+      ? requestedUnitId
+      : null
+
   let q = supabase
     .from('conversations')
     .select(
       `
-      id, status, routing, handoff_reason, priority,
+      id, unit_id, status, routing, handoff_reason, priority,
       last_inbound_at, customer_window_expires_at, assigned_operator_id,
       contact:contacts(id, wa_id, name),
       phone:chat_phone_numbers(display_phone)
@@ -56,6 +79,10 @@ export default async function InboxPage({
     q = q.eq('status', 'closed')
   }
 
+  if (effectiveUnitId) {
+    q = q.eq('unit_id', effectiveUnitId)
+  }
+
   const { data: convs, error } = await q
 
   if (error) {
@@ -64,9 +91,6 @@ export default async function InboxPage({
 
   const conversations = (convs ?? []) as unknown as ConversationListItem[]
 
-  // Fetch a small batch of recent messages for these conversations to build previews.
-  // We pull more than `ids.length` because the most recent N for each conv may overlap;
-  // the JS-side group will pick the first match per conv. 100 convs × ~5 = 500 rows max.
   const previewMap: Record<string, ConversationListItem['preview']> = {}
   const ids = conversations.map((c) => c.id)
   if (ids.length > 0) {
@@ -100,8 +124,9 @@ export default async function InboxPage({
   }))
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="header-glow elegant-divider sticky top-0 z-10 flex flex-col gap-3 border-b border-border bg-card/80 px-6 py-5 backdrop-blur-sm">
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Header: flex shrink-0 garante que NÃO seja espremido por listas longas */}
+      <header className="header-glow elegant-divider z-10 flex shrink-0 flex-col gap-3 border-b border-border bg-card/80 px-6 py-5 backdrop-blur-sm">
         <div className="relative z-10 flex items-end justify-between gap-4">
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.25em] text-accent">
@@ -118,10 +143,18 @@ export default async function InboxPage({
           </div>
         </div>
         <div className="relative z-10">
-          <TabsBar value={tab} />
+          <TabsBar
+            value={tab}
+            units={units}
+            selectedUnitId={effectiveUnitId}
+          />
         </div>
       </header>
-      <InboxClient initial={items} userId={user.id} tab={tab} />
+      {/* min-h-0 no wrapper resolve flex bug que estourava o ScrollArea
+          quando a lista era longa (218+ conversas no tab "Todos") */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <InboxClient initial={items} userId={user.id} tab={tab} />
+      </div>
     </div>
   )
 }
@@ -132,7 +165,6 @@ function extractPreviewText(
 ): string {
   if (!payload) return type ? `[${type}]` : ''
 
-  // text messages: { text: { body } } (inbound) or { body } (outbound)
   const textObj = payload['text'] as { body?: unknown } | undefined
   if (textObj && typeof textObj.body === 'string') {
     return firstLine(textObj.body)
@@ -140,21 +172,18 @@ function extractPreviewText(
   if (typeof payload['body'] === 'string') {
     return firstLine(payload['body'] as string)
   }
-  // image/video/document with caption
   for (const key of ['image', 'video', 'document', 'audio'] as const) {
     const m = payload[key] as { caption?: unknown } | undefined
     if (m && typeof m.caption === 'string' && m.caption.length > 0) {
       return firstLine(m.caption)
     }
   }
-  // interactive / button replies
   const interactive = payload['interactive'] as
     | { button_reply?: { title?: string }; list_reply?: { title?: string } }
     | undefined
   if (interactive?.button_reply?.title) return interactive.button_reply.title
   if (interactive?.list_reply?.title) return interactive.list_reply.title
 
-  // template name fallback
   const tpl = payload['template'] as { name?: string } | undefined
   if (tpl?.name) return `[template: ${tpl.name}]`
 

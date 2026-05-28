@@ -236,7 +236,7 @@ export function InboxClient({
 
   if (empty) {
     return (
-      <div className="flex flex-1 items-center justify-center px-6 py-16">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-16">
         <div className="flex max-w-sm flex-col items-center gap-3 text-center">
           <div
             className="flex size-12 items-center justify-center rounded-full border border-border bg-secondary text-muted-foreground"
@@ -256,8 +256,10 @@ export function InboxClient({
     )
   }
 
+  // min-h-0 + flex-1 resolve o bug do flex em que listas grandes
+  // (tab "Todos" com 218+ conversas) empurravam o header pra fora.
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="min-h-0 flex-1">
       <ul className="flex flex-col">
         {items.map((c) => (
           <li key={c.id}>

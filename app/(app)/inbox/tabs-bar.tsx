@@ -3,9 +3,18 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useTransition } from 'react'
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 export type InboxTab = 'queued' | 'mine' | 'all' | 'closed'
+
+export type UnitOption = { id: string; code: string; name: string }
 
 const TABS: { value: InboxTab; label: string }[] = [
   { value: 'queued', label: 'Aguardando' },
@@ -14,35 +23,79 @@ const TABS: { value: InboxTab; label: string }[] = [
   { value: 'closed', label: 'Encerrados' },
 ]
 
-export function TabsBar({ value }: { value: InboxTab }) {
+const ALL_UNITS = '__all__'
+
+export function TabsBar({
+  value,
+  units,
+  selectedUnitId,
+}: {
+  value: InboxTab
+  units: UnitOption[]
+  selectedUnitId: string | null
+}) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [, startTransition] = useTransition()
 
-  function handleChange(next: unknown) {
-    if (next == null) return
-    const nextStr = String(next)
-    if (nextStr === value) return
+  function navigate(updates: Record<string, string | null>) {
     const params = new URLSearchParams(searchParams.toString())
-    params.set('tab', nextStr)
+    for (const [k, v] of Object.entries(updates)) {
+      if (v === null || v === '') params.delete(k)
+      else params.set(k, v)
+    }
+    const qs = params.toString()
     startTransition(() => {
-      router.push(`/inbox?${params.toString()}`)
+      router.push(qs ? `/inbox?${qs}` : '/inbox')
     })
   }
 
+  function handleTabChange(next: unknown) {
+    if (next == null) return
+    const nextStr = String(next)
+    if (nextStr === value) return
+    navigate({ tab: nextStr })
+  }
+
+  function handleUnitChange(next: unknown) {
+    const nextStr = next == null ? ALL_UNITS : String(next)
+    navigate({ unit: nextStr === ALL_UNITS ? null : nextStr })
+  }
+
   return (
-    <Tabs value={value} onValueChange={handleChange} className="w-fit">
-      <TabsList className="bg-secondary/70">
-        {TABS.map((t) => (
-          <TabsTrigger
-            key={t.value}
-            value={t.value}
-            className="font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground data-active:bg-accent data-active:text-accent-foreground data-active:shadow-sm dark:data-active:bg-accent dark:data-active:text-accent-foreground"
-          >
-            {t.label}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-    </Tabs>
+    <div className="flex flex-wrap items-center gap-3">
+      <Tabs value={value} onValueChange={handleTabChange} className="w-fit">
+        <TabsList className="bg-secondary/70">
+          {TABS.map((t) => (
+            <TabsTrigger
+              key={t.value}
+              value={t.value}
+              className="font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground data-active:bg-accent data-active:text-accent-foreground data-active:shadow-sm dark:data-active:bg-accent dark:data-active:text-accent-foreground"
+            >
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
+      {units.length > 1 ? (
+        <Select
+          value={selectedUnitId ?? ALL_UNITS}
+          onValueChange={handleUnitChange}
+        >
+          <SelectTrigger className="h-8 min-w-[200px] text-xs">
+            <SelectValue placeholder="Todas as unidades" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_UNITS}>Todas as unidades</SelectItem>
+            {units.map((u) => (
+              <SelectItem key={u.id} value={u.id}>
+                {u.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
+    </div>
   )
 }
