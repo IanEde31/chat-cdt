@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase/service'
+import {
+  downloadAndStore,
+  extractMediaInfo,
+} from '@/lib/storage/media'
 import type {
   WebhookEnvelope,
   WebhookMessage,
@@ -185,7 +189,72 @@ async function handleInboundMessage(
     },
     { onConflict: 'wa_message_id', ignoreDuplicates: true }
   )
-  if (msgErr) console.error('[webhook] message insert failed', msgErr)
+  if (msgErr) {
+    console.error('[webhook] message insert failed', msgErr)
+    return
+  }
+
+  // Se a mensagem tem mídia (image/audio/video/document/sticker), dispara
+  // download assíncrono pro bucket. NÃO bloqueia: o operador já vê a row
+  // imediatamente; quando a mídia terminar, payload ganha media.storage_path
+  // e Realtime UPDATE atualiza a UI.
+  //
+  // URL da Meta expira em ~5min, então é importante começar logo.
+  const media = extractMediaInfo(
+    msg as unknown as Record<string, unknown>,
+    msg.type
+  )
+  if (media) {
+    void persistInboundMedia(supabase, conversationId, msg.id, media, msg)
+  }
+}
+
+async function persistInboundMedia(
+  supabase: ReturnType<typeof createServiceClient>,
+  conversationId: string,
+  waMessageId: string,
+  media: ReturnType<typeof extractMediaInfo>,
+  originalPayload: WebhookMessage
+) {
+  if (!media) return
+  const result = await downloadAndStore(supabase, {
+    conversationId,
+    waMessageId,
+    media,
+  })
+
+  if ('error' in result) {
+    console.error(
+      '[webhook] media download failed',
+      waMessageId,
+      media.type,
+      result.error
+    )
+    return
+  }
+
+  // Adiciona storage_path dentro do sub-objeto da mídia
+  // (payload.image / payload.audio / etc), preservando o resto.
+  const subObj = (originalPayload as unknown as Record<string, unknown>)[
+    media.type
+  ] as Record<string, unknown>
+  const updatedSub = {
+    ...subObj,
+    storage_path: result.storage_path,
+  }
+  const updatedPayload = {
+    ...(originalPayload as unknown as Record<string, unknown>),
+    [media.type]: updatedSub,
+  }
+
+  const { error: updErr } = await supabase
+    .from('messages')
+    .update({ payload: updatedPayload })
+    .eq('wa_message_id', waMessageId)
+
+  if (updErr) {
+    console.error('[webhook] media path patch failed', updErr)
+  }
 }
 
 async function getOrCreateOpenConversation(

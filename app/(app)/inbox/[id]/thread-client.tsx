@@ -4,20 +4,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, CheckCheck, Clock, TriangleAlert } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
+import { createMediaSignedUrl, extractMediaInfo } from '@/lib/storage/media'
 import { cn } from '@/lib/utils'
 
 import { ComposerBar } from './composer-bar'
+import { MediaBubble } from './media-bubble'
 import type { ConversationView, Message } from './page'
 import { ThreadHeader } from './thread-header'
+
+type MediaState = { url: string | null; pending: boolean }
 
 type Props = {
   initial: Message[]
   conversation: ConversationView
   userId: string
+  /** URLs assinadas + estado pending pré-gerados em SSR. */
+  initialMediaUrls: Record<string, MediaState>
 }
 
-export function ThreadClient({ initial, conversation, userId }: Props) {
+export function ThreadClient({
+  initial,
+  conversation,
+  userId,
+  initialMediaUrls,
+}: Props) {
   const [messages, setMessages] = useState<Message[]>(initial)
+  const [mediaUrls, setMediaUrls] =
+    useState<Record<string, MediaState>>(initialMediaUrls)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const endRef = useRef<HTMLDivElement | null>(null)
 
@@ -66,6 +79,8 @@ export function ThreadClient({ initial, conversation, userId }: Props) {
             }
             return [...prev, row]
           })
+          // Se tem mídia já com storage_path no INSERT, resolve URL.
+          void resolveMediaUrlIfNeeded(row)
           scrollToBottom()
         },
       )
@@ -86,6 +101,8 @@ export function ThreadClient({ initial, conversation, userId }: Props) {
             next[idx] = { ...prev[idx], ...row }
             return next
           })
+          // Mídia que veio depois (webhook terminou de baixar).
+          void resolveMediaUrlIfNeeded(row)
         },
       )
       .subscribe()
@@ -93,6 +110,32 @@ export function ThreadClient({ initial, conversation, userId }: Props) {
     return () => {
       supabase.removeChannel(channel)
     }
+
+    async function resolveMediaUrlIfNeeded(row: Message) {
+      const info = extractMediaInfo(row.payload, row.type)
+      if (!info) return
+      const sub = (row.payload as Record<string, unknown> | null)?.[row.type] as
+        | { storage_path?: string }
+        | undefined
+      const path = sub?.storage_path
+      if (!path) {
+        // Ainda baixando: mensagem é recente (chegou via Realtime há instantes),
+        // então marca pending para spinner. Webhook deve completar em 1-3s.
+        setMediaUrls((prev) => ({
+          ...prev,
+          [row.id]: prev[row.id] ?? { url: null, pending: true },
+        }))
+        return
+      }
+      // Já tem URL? evita refetch.
+      if (mediaUrls[row.id]?.url) return
+      const url = await createMediaSignedUrl(supabase, path, 3600)
+      setMediaUrls((prev) => ({
+        ...prev,
+        [row.id]: { url, pending: false },
+      }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.id, scrollToBottom])
 
   /**
@@ -152,7 +195,11 @@ export function ThreadClient({ initial, conversation, userId }: Props) {
             </div>
           ) : (
             messages.map((m) => (
-              <MessageBubble key={m.id} msg={m} />
+              <MessageBubble
+                key={m.id}
+                msg={m}
+                media={mediaUrls[m.id] ?? { url: null, pending: false }}
+              />
             ))
           )}
           <div ref={endRef} />
@@ -173,17 +220,25 @@ export function ThreadClient({ initial, conversation, userId }: Props) {
   )
 }
 
-function MessageBubble({ msg }: { msg: Message }) {
+const MEDIA_TYPES = new Set(['image', 'audio', 'video', 'document', 'sticker'])
+
+function MessageBubble({
+  msg,
+  media,
+}: {
+  msg: Message
+  media: MediaState
+}) {
   const isIn = msg.direction === 'in'
   const sentByOperator = msg.sent_by === 'operator'
   const sentByAI = msg.sent_by === 'ai'
+  const isMedia = MEDIA_TYPES.has(msg.type)
 
-  // Differentiate three bubble flavours:
-  // - inbound: secondary background, corner accent bottom-left
-  // - outbound-AI: secondary + border (neutral), corner accent bottom-right
-  // - outbound-operator: lime accent (protagonist), corner accent bottom-right
+  // Bubble base + variantes (in / out-AI / out-operator).
+  // Mídia tem padding menor pra thumbnail/player parecer "encaixado".
   const bubbleClass = cn(
-    'max-w-[70%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words shadow-sm',
+    'max-w-[70%] rounded-2xl shadow-sm whitespace-pre-wrap break-words text-sm leading-relaxed',
+    isMedia ? 'p-1.5' : 'px-3.5 py-2',
     isIn && 'bg-secondary text-foreground rounded-bl-sm',
     !isIn &&
       sentByAI &&
@@ -197,10 +252,7 @@ function MessageBubble({ msg }: { msg: Message }) {
       'bg-secondary text-foreground rounded-br-sm',
   )
 
-  const rowClass = cn(
-    'flex w-full',
-    isIn ? 'justify-start' : 'justify-end',
-  )
+  const rowClass = cn('flex w-full', isIn ? 'justify-start' : 'justify-end')
 
   return (
     <div className={rowClass}>
@@ -210,14 +262,26 @@ function MessageBubble({ msg }: { msg: Message }) {
           isIn ? 'items-start' : 'items-end',
         )}
       >
-        {/* "IA" chip above outbound AI bubbles */}
         {!isIn && sentByAI && (
           <span className="inline-block rounded-full border border-accent/30 bg-accent/15 px-1.5 py-0 font-mono text-[9px] uppercase tracking-wider text-accent">
             IA
           </span>
         )}
 
-        <div className={bubbleClass}>{renderMessageBody(msg)}</div>
+        <div className={bubbleClass}>
+          {isMedia ? (
+            <MediaBubble
+              type={msg.type}
+              signedUrl={media.url}
+              pending={media.pending}
+              caption={extractCaption(msg)}
+              filename={extractFilename(msg)}
+              mimeType={extractMimeType(msg)}
+            />
+          ) : (
+            renderTextBody(msg)
+          )}
+        </div>
 
         <div
           className={cn(
@@ -233,13 +297,10 @@ function MessageBubble({ msg }: { msg: Message }) {
   )
 }
 
-function renderMessageBody(msg: Message): string {
+function renderTextBody(msg: Message): string {
   const payload = msg.payload as Record<string, unknown> | null
   if (!payload) return `[${msg.type}]`
 
-  // Inbound text comes as { text: { body: '...' } }; outbound text we
-  // posted with the same shape. Templates carry the template name we
-  // sent; we surface that as a placeholder.
   if (msg.type === 'text') {
     const text = (payload.text as { body?: string } | undefined)?.body
     return text ?? '[mensagem vazia]'
@@ -248,12 +309,47 @@ function renderMessageBody(msg: Message): string {
     const tpl = payload.template as { name?: string } | undefined
     return `[template: ${tpl?.name ?? 'desconhecido'}]`
   }
-  if (msg.type === 'image') return '[imagem]'
-  if (msg.type === 'audio') return '[áudio]'
-  if (msg.type === 'video') return '[vídeo]'
-  if (msg.type === 'document') return '[documento]'
-  if (msg.type === 'interactive') return '[interativo]'
+  if (msg.type === 'button') {
+    const btn = payload.button as { text?: string } | undefined
+    return btn?.text ?? '[botão]'
+  }
+  if (msg.type === 'reaction') {
+    const r = payload.reaction as { emoji?: string } | undefined
+    return r?.emoji ? `Reagiu com ${r.emoji}` : '[reação]'
+  }
+  if (msg.type === 'interactive') {
+    const inter = payload.interactive as
+      | {
+          button_reply?: { title?: string }
+          list_reply?: { title?: string }
+        }
+      | undefined
+    return (
+      inter?.button_reply?.title ?? inter?.list_reply?.title ?? '[interativo]'
+    )
+  }
   return `[${msg.type}]`
+}
+
+function extractCaption(msg: Message): string | null {
+  const sub = (msg.payload as Record<string, unknown> | null)?.[msg.type] as
+    | { caption?: string }
+    | undefined
+  return sub?.caption ?? null
+}
+
+function extractFilename(msg: Message): string | null {
+  const sub = (msg.payload as Record<string, unknown> | null)?.[msg.type] as
+    | { filename?: string }
+    | undefined
+  return sub?.filename ?? null
+}
+
+function extractMimeType(msg: Message): string | null {
+  const sub = (msg.payload as Record<string, unknown> | null)?.[msg.type] as
+    | { mime_type?: string }
+    | undefined
+  return sub?.mime_type ?? null
 }
 
 function StatusIcon({ status }: { status: Message['status'] }) {

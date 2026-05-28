@@ -1,6 +1,10 @@
 import { notFound, redirect } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/server'
+import {
+  createMediaSignedUrl,
+  extractMediaInfo,
+} from '@/lib/storage/media'
 
 import { ThreadClient } from './thread-client'
 
@@ -111,11 +115,38 @@ export default async function ThreadPage({
 
   const messages = (messagesRaw ?? []) as unknown as Message[]
 
+  // Pré-gera URLs assinadas (1h) para cada mensagem com mídia. Para cada msg
+  // armazenamos { url, pending }:
+  //   - url: signed URL ou null
+  //   - pending: true se ainda dentro da janela em que esperamos o download
+  //              do webhook (msg < 2 min); false → "indisponível" definitivo.
+  const PENDING_WINDOW_MS = 2 * 60 * 1000
+  const now = Date.now()
+  const mediaUrlMap: Record<
+    string,
+    { url: string | null; pending: boolean }
+  > = {}
+  for (const m of messages) {
+    const info = extractMediaInfo(m.payload, m.type)
+    if (!info) continue
+    const sub = (m.payload as Record<string, unknown> | null)?.[m.type] as
+      | { storage_path?: string }
+      | undefined
+    const ageMs = now - new Date(m.created_at).getTime()
+    if (!sub?.storage_path) {
+      mediaUrlMap[m.id] = { url: null, pending: ageMs < PENDING_WINDOW_MS }
+      continue
+    }
+    const url = await createMediaSignedUrl(supabase, sub.storage_path, 3600)
+    mediaUrlMap[m.id] = { url, pending: false }
+  }
+
   return (
     <ThreadClient
       initial={messages}
       conversation={conversation}
       userId={user.id}
+      initialMediaUrls={mediaUrlMap}
     />
   )
 }
