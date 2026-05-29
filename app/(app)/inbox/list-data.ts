@@ -20,12 +20,17 @@ export const HANDOFF_LABEL: Record<HandoffReason, string> = {
   cancel: 'Cancelamento',
 }
 
-export type InboxTab = HandoffReason | 'closed'
+/**
+ * Primary navigation axis = STATE/OWNERSHIP (not reason). Multi-operator flow:
+ * an attendant lives in Aguardando (claim) → Meus (work). Reason/operator are
+ * secondary FILTERS layered on top (see matchesReason/matchesOperator).
+ */
+export type InboxTab = 'waiting' | 'mine' | 'team' | 'closed'
 
 export const INBOX_TABS: { value: InboxTab; label: string }[] = [
-  { value: 'payment_re_register', label: 'Recadastro pagamento' },
-  { value: 'other_support', label: 'Suporte' },
-  { value: 'cancel', label: 'Cancelamento' },
+  { value: 'waiting', label: 'Aguardando' },
+  { value: 'mine', label: 'Meus' },
+  { value: 'team', label: 'Equipe' },
   { value: 'closed', label: 'Encerrados' },
 ]
 
@@ -70,20 +75,59 @@ export function isHandoffMember(
   return c.status === 'open' && c.routing !== 'ai'
 }
 
-/** Tab membership (the tabs are handoff reasons + closed). */
+/**
+ * Tab membership by state/ownership. `currentUserId` is the auth id of the
+ * logged-in operator (assigned_operator_id references auth.users).
+ *
+ * Hybrid exclusivity: once claimed, a conversation leaves 'waiting' for
+ * everyone and shows only in the owner's 'mine' (others see it under 'team').
+ */
 export function matchesTab(
   c: Pick<
     ConversationListItem,
-    'status' | 'routing' | 'handoff_reason'
+    'status' | 'routing' | 'assigned_operator_id'
   >,
   tab: InboxTab,
+  currentUserId: string | null,
 ): boolean {
-  if (tab === 'closed') {
-    return c.status === 'closed' && c.handoff_reason != null
+  switch (tab) {
+    case 'waiting':
+      return (
+        c.status === 'open' &&
+        c.routing !== 'ai' &&
+        c.assigned_operator_id == null
+      )
+    case 'mine':
+      return (
+        c.status === 'open' &&
+        c.assigned_operator_id != null &&
+        c.assigned_operator_id === currentUserId
+      )
+    case 'team':
+      return (
+        c.status === 'open' &&
+        c.assigned_operator_id != null &&
+        c.assigned_operator_id !== currentUserId
+      )
+    case 'closed':
+      return c.status === 'closed'
   }
-  return (
-    c.status === 'open' && c.routing !== 'ai' && c.handoff_reason === tab
-  )
+}
+
+/** Secondary filter: handoff reason ('all' = no filter). */
+export function matchesReason(
+  c: Pick<ConversationListItem, 'handoff_reason'>,
+  reason: HandoffReason | 'all',
+): boolean {
+  return reason === 'all' || c.handoff_reason === reason
+}
+
+/** Secondary filter: assigned operator ('all' = no filter). */
+export function matchesOperator(
+  c: Pick<ConversationListItem, 'assigned_operator_id'>,
+  operatorId: string | 'all',
+): boolean {
+  return operatorId === 'all' || c.assigned_operator_id === operatorId
 }
 
 /** Default order: priority desc, then most recent activity first. */

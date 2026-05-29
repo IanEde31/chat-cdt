@@ -3,13 +3,16 @@
 import { Search } from 'lucide-react'
 
 import { InboxRow } from '@/app/(app)/inbox/inbox-row'
-import type {
-  ConversationListItem,
-  InboxTab,
+import {
+  HANDOFF_LABEL,
+  type ConversationListItem,
+  type HandoffReason,
+  type InboxTab,
 } from '@/app/(app)/inbox/list-data'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
 import { BulkActionBar } from './bulk-action-bar'
+import { FilterSelect } from './filter-select'
 import { FilterTabs } from './filter-tabs'
 import { QueueVitals } from './queue-vitals'
 
@@ -21,6 +24,13 @@ export function InboxListColumn({
   onTab,
   search,
   onSearch,
+  reasonFilter,
+  onReasonFilter,
+  operatorFilter,
+  onOperatorFilter,
+  operators,
+  currentUserId,
+  operatorNames,
   activeId,
   selectedIds,
   onToggleSelect,
@@ -35,6 +45,13 @@ export function InboxListColumn({
   onTab: (t: InboxTab) => void
   search: string
   onSearch: (s: string) => void
+  reasonFilter: HandoffReason | 'all'
+  onReasonFilter: (r: HandoffReason | 'all') => void
+  operatorFilter: string | 'all'
+  onOperatorFilter: (id: string | 'all') => void
+  operators: { id: string; name: string }[]
+  currentUserId: string
+  operatorNames: Record<string, string>
   activeId: string | null
   selectedIds: Set<string>
   onToggleSelect: (id: string) => void
@@ -42,6 +59,20 @@ export function InboxListColumn({
   onBulkAssign: () => void
   onBulkClose: () => void
 }) {
+  const reasonOptions = [
+    { value: 'all', label: 'Todos os motivos' },
+    ...(Object.keys(HANDOFF_LABEL) as HandoffReason[]).map((r) => ({
+      value: r,
+      label: HANDOFF_LABEL[r],
+    })),
+  ]
+  const operatorOptions = [
+    { value: 'all', label: 'Todos os operadores' },
+    ...operators.map((o) => ({
+      value: o.id,
+      label: o.id === currentUserId ? `${o.name} (eu)` : o.name,
+    })),
+  ]
   return (
     <div className="flex w-[360px] shrink-0 flex-col border-r border-border bg-background xl:w-[400px]">
       {/* Header */}
@@ -63,6 +94,24 @@ export function InboxListColumn({
           />
 
           <FilterTabs tab={tab} onTab={onTab} counts={counts} />
+
+          {/* Secondary filters: reason + operator (custom dropdowns) */}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <FilterSelect
+              ariaLabel="Filtrar por motivo"
+              value={reasonFilter}
+              options={reasonOptions}
+              onChange={(v) => onReasonFilter(v as HandoffReason | 'all')}
+            />
+            {operators.length > 0 && (
+              <FilterSelect
+                ariaLabel="Filtrar por operador"
+                value={operatorFilter}
+                options={operatorOptions}
+                onChange={onOperatorFilter}
+              />
+            )}
+          </div>
 
           {/* Search */}
           <div className="relative pb-3 pt-3.5">
@@ -105,6 +154,8 @@ export function InboxListColumn({
                   isActive={c.id === activeId}
                   selected={selectedIds.has(c.id)}
                   onToggleSelect={onToggleSelect}
+                  currentUserId={currentUserId}
+                  operatorNames={operatorNames}
                 />
               </li>
             ))}

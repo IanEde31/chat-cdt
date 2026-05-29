@@ -198,12 +198,13 @@ export default async function ThreadPage({
   // Nomes dos operadores que enviaram nesta conversa (para a badge de autoria).
   // RLS de profiles só deixa ler o próprio perfil → via RPC SECURITY DEFINER.
   const operatorIds = Array.from(
-    new Set<string>([
-      user.id,
-      ...messages
-        .map((m) => m.operator_id)
-        .filter((x): x is string => !!x),
-    ]),
+    new Set<string>(
+      [
+        user.id,
+        conversation.assigned_operator_id,
+        ...messages.map((m) => m.operator_id),
+      ].filter((x): x is string => !!x),
+    ),
   )
   const operatorNames: Record<string, string> = {}
   if (operatorIds.length > 0) {

@@ -16,11 +16,15 @@ import {
   UserRound,
 } from 'lucide-react'
 
+import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
+
 import { createClient } from '@/lib/supabase/client'
 import { createMediaSignedUrl, extractMediaInfo } from '@/lib/storage/media'
 import { dateDividerLabel, dateKey } from '@/lib/format/time'
 import { cn } from '@/lib/utils'
 
+import { takeOverConversation } from './actions'
 import { ComposerBar } from './composer-bar'
 import { MediaBubble } from './media-bubble'
 import type { ConversationView, Message } from './page'
@@ -249,6 +253,26 @@ export function ThreadClient({
   const wabaTextId = conversation.phone?.waba?.waba_id ?? null
   const items = useMemo(() => buildThreadItems(messages), [messages])
 
+  // Hybrid exclusivity: if the conversation belongs to ANOTHER operator, the
+  // composer is read-only here (only the owner can reply) until taken over.
+  const router = useRouter()
+  const lockedBy =
+    conversation.assigned_operator_id &&
+    conversation.assigned_operator_id !== userId
+      ? (operatorNames[conversation.assigned_operator_id] ?? 'outro operador')
+      : null
+
+  const handleTakeOver = useCallback(() => {
+    void (async () => {
+      const r = await takeOverConversation(conversation.id)
+      if (r?.error) toast.error(`Assumir: ${r.error}`)
+      else {
+        toast.success('Atendimento assumido')
+        router.refresh()
+      }
+    })()
+  }, [conversation.id, router])
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <ThreadHeader
@@ -300,6 +324,8 @@ export function ThreadClient({
         expiresAt={conversation.customer_window_expires_at}
         wabaId={wabaTextId}
         userId={userId}
+        lockedBy={lockedBy}
+        onTakeOver={handleTakeOver}
         onOptimisticAppend={appendOptimistic}
         onOptimisticPatch={patchOptimistic}
         onOptimisticDrop={removeOptimistic}

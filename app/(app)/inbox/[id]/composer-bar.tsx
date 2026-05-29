@@ -14,8 +14,10 @@ import {
   Clock,
   LayoutTemplate,
   Loader2,
+  Lock,
   Paperclip,
   SendHorizontal,
+  UserCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -32,6 +34,9 @@ type Props = {
   expiresAt: string | null
   wabaId: string | null
   userId: string
+  /** Set when the conversation belongs to another operator (read-only). */
+  lockedBy?: string | null
+  onTakeOver?: () => void
   onOptimisticAppend: (msg: Message) => void
   onOptimisticPatch: (tempId: string, patch: Partial<Message>) => void
   onOptimisticDrop: (tempId: string) => void
@@ -46,6 +51,8 @@ export function ComposerBar({
   expiresAt,
   wabaId,
   userId,
+  lockedBy,
+  onTakeOver,
   onOptimisticAppend,
   onOptimisticPatch,
   onOptimisticDrop,
@@ -192,6 +199,36 @@ export function ComposerBar({
 
   const canSend = !sending && text.trim().length > 0 && insideWindow
   const canTemplate = wabaId !== null
+
+  // Read-only: another operator owns this conversation. Surface who, and offer
+  // to take it over (logs a 'reassigned' event server-side).
+  if (lockedBy) {
+    return (
+      <div className="elegant-divider relative shrink-0 border-t border-border bg-card/95 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
+        <div className="mx-auto flex max-w-3xl items-center gap-3 rounded-2xl border border-border bg-secondary/40 px-3.5 py-3">
+          <Lock className="size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium text-foreground">
+              Em atendimento por{' '}
+              <span className="text-sky-400">{lockedBy}</span>
+            </p>
+            <p className="text-[11.5px] text-muted-foreground">
+              Para responder, assuma o atendimento.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onTakeOver}
+            className="shrink-0"
+          >
+            <UserCheck className="size-3.5" />
+            Assumir de {lockedBy}
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="elegant-divider relative shrink-0 border-t border-border bg-card/95 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">

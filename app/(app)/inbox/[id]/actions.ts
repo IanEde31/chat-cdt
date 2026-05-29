@@ -4,13 +4,15 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/server'
+import type { CloseOutcome } from '@/app/(app)/inbox/outcomes'
 
 type ActionResult = { error?: string }
 
 /**
- * Operator claims a queued conversation:
- *   routing -> 'human', assigned_operator_id -> auth.uid().
- * RLS gates whether the caller may touch this conversation.
+ * Operator claims a QUEUED conversation. Atomic claim: only succeeds while
+ * assigned_operator_id IS NULL, so two operators racing the same conversation
+ * can't both win — the loser gets a friendly "já assumida". The transition
+ * trigger stamps assigned_at and logs the 'assigned' event.
  */
 export async function assignToMe(conversationId: string): Promise<ActionResult> {
   const supabase = await createClient()
@@ -19,16 +21,48 @@ export async function assignToMe(conversationId: string): Promise<ActionResult> 
   } = await supabase.auth.getUser()
   if (!user) return { error: 'unauthorized' }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('conversations')
-    .update({
-      routing: 'human',
-      assigned_operator_id: user.id,
-    })
+    .update({ routing: 'human', assigned_operator_id: user.id })
     .eq('id', conversationId)
+    .is('assigned_operator_id', null) // claim only if still unassigned
+    .select('id')
 
   if (error) {
     console.error('[assignToMe] update failed', error)
+    return { error: error.message }
+  }
+  if (!data || data.length === 0) {
+    // Someone claimed it first (or it's no longer unassigned).
+    return { error: 'Já assumida por outro operador.' }
+  }
+
+  revalidatePath(`/inbox/${conversationId}`)
+  revalidatePath('/inbox')
+  return {}
+}
+
+/**
+ * Take over a conversation already assigned to someone else (shift handover /
+ * supervisor). Unconditional reassignment — the trigger logs a 'reassigned'
+ * event with the actor, so the change is auditable.
+ */
+export async function takeOverConversation(
+  conversationId: string,
+): Promise<ActionResult> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { error: 'unauthorized' }
+
+  const { error } = await supabase
+    .from('conversations')
+    .update({ routing: 'human', assigned_operator_id: user.id })
+    .eq('id', conversationId)
+
+  if (error) {
+    console.error('[takeOverConversation] update failed', error)
     return { error: error.message }
   }
 
@@ -74,18 +108,26 @@ export async function returnToAI(conversationId: string): Promise<ActionResult> 
  */
 export async function closeConversation(
   conversationId: string,
+  outcome: CloseOutcome,
+  note?: string,
 ): Promise<ActionResult> {
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { error: 'unauthorized' }
+  if (!outcome) return { error: 'Informe o desfecho do atendimento.' }
 
+  // Single UPDATE carries status + outcome + author; the AFTER trigger reads
+  // NEW.* and writes the 'closed' event with the outcome baked in.
   const { error } = await supabase
     .from('conversations')
     .update({
       status: 'closed',
       closed_at: new Date().toISOString(),
+      closed_by: user.id,
+      close_outcome: outcome,
+      close_note: note?.trim() || null,
     })
     .eq('id', conversationId)
 
@@ -124,17 +166,26 @@ export async function bulkAssignToMe(ids: string[]): Promise<ActionResult> {
   return {}
 }
 
-export async function bulkClose(ids: string[]): Promise<ActionResult> {
+export async function bulkClose(
+  ids: string[],
+  outcome: CloseOutcome,
+): Promise<ActionResult> {
   if (ids.length === 0) return {}
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { error: 'unauthorized' }
+  if (!outcome) return { error: 'Informe o desfecho do atendimento.' }
 
   const { error } = await supabase
     .from('conversations')
-    .update({ status: 'closed', closed_at: new Date().toISOString() })
+    .update({
+      status: 'closed',
+      closed_at: new Date().toISOString(),
+      closed_by: user.id,
+      close_outcome: outcome,
+    })
     .in('id', ids)
 
   if (error) {

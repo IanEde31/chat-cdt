@@ -95,5 +95,35 @@ export default async function InboxLayout({
     preview: previewMap[c.id] ?? null,
   }))
 
-  return <InboxWorkspace initial={items}>{children}</InboxWorkspace>
+  // Resolve names for every assigned operator present (owner display + the
+  // operator filter). profiles RLS only exposes the own row, so we go through
+  // the SECURITY DEFINER RPC chat_operator_names.
+  const operatorIds = Array.from(
+    new Set(
+      items
+        .map((c) => c.assigned_operator_id)
+        .filter((x): x is string => !!x),
+    ),
+  )
+  const operatorNames: Record<string, string> = {}
+  if (operatorIds.length > 0) {
+    const { data: ops, error: opsErr } = await supabase.rpc(
+      'chat_operator_names',
+      { p_ids: operatorIds },
+    )
+    if (opsErr) console.error('[inbox] operator names failed', opsErr)
+    for (const o of (ops ?? []) as { user_id: string; name: string | null }[]) {
+      if (o.name) operatorNames[o.user_id] = o.name
+    }
+  }
+
+  return (
+    <InboxWorkspace
+      initial={items}
+      currentUserId={user.id}
+      operatorNames={operatorNames}
+    >
+      {children}
+    </InboxWorkspace>
+  )
 }

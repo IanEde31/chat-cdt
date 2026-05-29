@@ -14,17 +14,22 @@ import { bulkAssignToMe, bulkClose } from '@/app/(app)/inbox/[id]/actions'
 import {
   INBOX_TABS,
   isHandoffMember,
+  matchesOperator,
+  matchesReason,
   matchesSearch,
   matchesTab,
   sortItems,
   type ConversationListItem,
   type ConversationRow,
+  type HandoffReason,
   type InboxTab,
 } from '@/app/(app)/inbox/list-data'
 import { extractPreview } from '@/app/(app)/inbox/preview'
 import { waitMinutes } from '@/app/(app)/inbox/sla'
+import type { CloseOutcome } from '@/app/(app)/inbox/outcomes'
 import { createClient } from '@/lib/supabase/client'
 
+import { CloseDialog } from './close-dialog'
 import { InboxListColumn } from './inbox-list-column'
 import { useUnitFilter } from './unit-filter'
 
@@ -37,28 +42,42 @@ type MessageRow = {
   type: string | null
 }
 
-/** First reason tab that has items (so the operator doesn't land on an empty tab). */
-function pickDefaultTab(items: ConversationListItem[]): InboxTab {
+/**
+ * Land on the most useful non-empty tab: Aguardando first (work to grab),
+ * then Meus, then Equipe, then Encerrados.
+ */
+function pickDefaultTab(
+  items: ConversationListItem[],
+  currentUserId: string | null,
+): InboxTab {
   for (const t of INBOX_TABS) {
-    if (t.value === 'closed') continue
-    if (items.some((c) => matchesTab(c, t.value))) return t.value
+    if (items.some((c) => matchesTab(c, t.value, currentUserId))) return t.value
   }
-  return 'payment_re_register'
+  return 'waiting'
 }
 
 export function InboxWorkspace({
   initial,
+  currentUserId,
+  operatorNames = {},
   children,
 }: {
   initial: ConversationListItem[]
+  currentUserId: string
+  operatorNames?: Record<string, string>
   children: React.ReactNode
 }) {
   const [items, setItems] = useState<ConversationListItem[]>(initial)
-  const [tab, setTab] = useState<InboxTab>(() => pickDefaultTab(initial))
+  const [tab, setTab] = useState<InboxTab>(() =>
+    pickDefaultTab(initial, currentUserId),
+  )
   const [search, setSearch] = useState('')
+  const [reasonFilter, setReasonFilter] = useState<HandoffReason | 'all'>('all')
+  const [operatorFilter, setOperatorFilter] = useState<string | 'all'>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkCloseOpen, setBulkCloseOpen] = useState(false)
   const [, setNow] = useState(0)
-  const [, startTransition] = useTransition()
+  const [isBulkPending, startTransition] = useTransition()
 
   const router = useRouter()
   const pathname = usePathname()
@@ -191,42 +210,59 @@ export function InboxWorkspace({
 
   const counts = useMemo(() => {
     const c: Record<InboxTab, number> = {
-      payment_re_register: 0,
-      other_support: 0,
-      cancel: 0,
+      waiting: 0,
+      mine: 0,
+      team: 0,
       closed: 0,
     }
     for (const it of unitScoped) {
       for (const t of INBOX_TABS) {
-        if (matchesTab(it, t.value)) c[t.value]++
+        if (matchesTab(it, t.value, currentUserId)) c[t.value]++
       }
     }
     return c
-  }, [unitScoped])
+  }, [unitScoped, currentUserId])
 
   const vitals = useMemo(() => {
     let waiting = 0
     let breached = 0
     let active = 0
     for (const it of unitScoped) {
-      if (it.status === 'open' && it.routing === 'queued') {
+      if (it.status !== 'open') continue
+      if (it.assigned_operator_id == null && it.routing !== 'ai') {
         waiting++
         const w = waitMinutes(it.last_inbound_at)
         if (w != null && w >= 20) breached++
+      } else if (it.assigned_operator_id != null) {
+        active++
       }
-      if (it.status === 'open' && it.routing === 'human') active++
     }
     return { waiting, breached, active }
   }, [unitScoped])
+
+  // Operators present in the current unit scope (for the operator filter).
+  const operators = useMemo(() => {
+    const ids = new Set<string>()
+    for (const it of unitScoped) {
+      if (it.assigned_operator_id) ids.add(it.assigned_operator_id)
+    }
+    return Array.from(ids)
+      .map((id) => ({ id, name: operatorNames[id] ?? 'Operador' }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [unitScoped, operatorNames])
 
   const rows = useMemo(
     () =>
       sortItems(
         unitScoped.filter(
-          (c) => matchesTab(c, tab) && matchesSearch(c, search),
+          (c) =>
+            matchesTab(c, tab, currentUserId) &&
+            matchesSearch(c, search) &&
+            matchesReason(c, reasonFilter) &&
+            matchesOperator(c, operatorFilter),
         ),
       ),
-    [unitScoped, tab, search],
+    [unitScoped, tab, search, reasonFilter, operatorFilter, currentUserId],
   )
 
   // -- Keyboard J/K navigation within the visible rows -----------------------
@@ -278,6 +314,21 @@ export function InboxWorkspace({
     [selectedIds, clearSelection],
   )
 
+  const confirmBulkClose = useCallback(
+    (outcome: CloseOutcome) => {
+      const ids = Array.from(selectedIds)
+      if (ids.length === 0) return
+      startTransition(async () => {
+        const r = await bulkClose(ids, outcome)
+        if (r?.error) toast.error(`Encerradas: ${r.error}`)
+        else toast.success(`Encerradas (${ids.length})`)
+        setBulkCloseOpen(false)
+        clearSelection()
+      })
+    },
+    [selectedIds, clearSelection],
+  )
+
   return (
     <div className="flex min-h-0 flex-1">
       <InboxListColumn
@@ -288,16 +339,31 @@ export function InboxWorkspace({
         onTab={setTab}
         search={search}
         onSearch={setSearch}
+        reasonFilter={reasonFilter}
+        onReasonFilter={setReasonFilter}
+        operatorFilter={operatorFilter}
+        onOperatorFilter={setOperatorFilter}
+        operators={operators}
+        currentUserId={currentUserId}
+        operatorNames={operatorNames}
         activeId={activeId}
         selectedIds={selectedIds}
         onToggleSelect={toggleSelect}
         onClearSelection={clearSelection}
         onBulkAssign={() => runBulk('Atribuídas a você', bulkAssignToMe)}
-        onBulkClose={() => runBulk('Encerradas', bulkClose)}
+        onBulkClose={() => setBulkCloseOpen(true)}
       />
       <section className="relative flex min-w-0 flex-1 overflow-hidden">
         {children}
       </section>
+
+      <CloseDialog
+        open={bulkCloseOpen}
+        onOpenChange={setBulkCloseOpen}
+        count={selectedIds.size}
+        pending={isBulkPending}
+        onConfirm={confirmBulkClose}
+      />
     </div>
   )
 }

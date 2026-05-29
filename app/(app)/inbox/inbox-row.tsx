@@ -8,6 +8,7 @@ import {
   Image as ImageIcon,
   Mic,
   Timer,
+  UserRound,
   Video,
   XCircle,
   type LucideIcon,
@@ -73,11 +74,15 @@ export function InboxRow({
   isActive = false,
   selected = false,
   onToggleSelect,
+  currentUserId,
+  operatorNames = {},
 }: {
   conv: ConversationListItem
   isActive?: boolean
   selected?: boolean
   onToggleSelect?: (id: string) => void
+  currentUserId?: string
+  operatorNames?: Record<string, string>
 }) {
   const displayName =
     conv.contact?.name?.trim() ||
@@ -90,8 +95,15 @@ export function InboxRow({
     conv.unit?.code?.toUpperCase() || conv.unit?.name || null
 
   const isQueued = conv.routing === 'queued' && !conv.assigned_operator_id
-  const isAssigned = conv.routing === 'human' && !!conv.assigned_operator_id
+  const isAssigned = !!conv.assigned_operator_id
   const isClosed = conv.status === 'closed'
+  const ownedByMe =
+    !!conv.assigned_operator_id && conv.assigned_operator_id === currentUserId
+  const ownerLabel = conv.assigned_operator_id
+    ? ownedByMe
+      ? 'Você'
+      : (operatorNames[conv.assigned_operator_id] ?? 'Operador')
+    : null
 
   const handoff = conv.handoff_reason ? HANDOFF[conv.handoff_reason] : null
 
@@ -218,9 +230,18 @@ export function InboxRow({
             </span>
           ) : null}
 
-          {isAssigned && (
-            <span className="inline-flex items-center rounded-full border border-border bg-secondary px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
-              Atendido
+          {isAssigned && ownerLabel && (
+            <span
+              className={cn(
+                'inline-flex max-w-[140px] items-center gap-1 rounded-full border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.04em]',
+                ownedByMe
+                  ? 'border-accent/40 bg-accent/10 text-accent'
+                  : 'border-sky-400/30 bg-sky-400/10 text-sky-400',
+              )}
+              title={`Em atendimento por ${ownerLabel}`}
+            >
+              <UserRound className="size-2.5 shrink-0" aria-hidden />
+              <span className="truncate">{ownerLabel}</span>
             </span>
           )}
 

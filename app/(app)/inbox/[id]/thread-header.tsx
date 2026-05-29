@@ -15,6 +15,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { CloseDialog } from '@/components/inbox/close-dialog'
 import {
   Sheet,
   SheetClose,
@@ -25,6 +26,7 @@ import { cn } from '@/lib/utils'
 import { formatWaId } from '@/lib/format/phone'
 import { unitColor } from '@/lib/unit-colors'
 import { waitMinutes } from '@/app/(app)/inbox/sla'
+import type { CloseOutcome } from '@/app/(app)/inbox/outcomes'
 
 import { assignToMe, closeConversation, returnToAI } from './actions'
 import type { ConversationView } from './page'
@@ -52,6 +54,7 @@ const TWO_HOURS_MS = 2 * 60 * 60 * 1000
 
 export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
   const [isPending, startTransition] = useTransition()
+  const [closeOpen, setCloseOpen] = useState(false)
   const [, setTick] = useState(0)
 
   useEffect(() => {
@@ -96,6 +99,14 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
       const r = await action()
       if (r?.error) toast.error(`${label}: ${r.error}`)
       else toast.success(label)
+    })
+  }
+
+  function confirmClose(outcome: CloseOutcome, note?: string) {
+    startTransition(async () => {
+      // closeConversation redirects on success; only errors return here.
+      const r = await closeConversation(conv.id, outcome, note)
+      if (r?.error) toast.error(`Encerrar: ${r.error}`)
     })
   }
 
@@ -199,7 +210,7 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
           size="sm"
           variant="ghost"
           disabled={isPending}
-          onClick={() => run('Encerrada', () => closeConversation(conv.id))}
+          onClick={() => setCloseOpen(true)}
         >
           <X />
           Encerrar
@@ -279,9 +290,7 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
                   <Button
                     variant="ghost"
                     disabled={isPending}
-                    onClick={() =>
-                      run('Encerrada', () => closeConversation(conv.id))
-                    }
+                    onClick={() => setCloseOpen(true)}
                   >
                     <X />
                     Encerrar
@@ -292,6 +301,13 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
           </div>
         </SheetContent>
       </Sheet>
+
+      <CloseDialog
+        open={closeOpen}
+        onOpenChange={setCloseOpen}
+        pending={isPending}
+        onConfirm={confirmClose}
+      />
     </header>
   )
 }

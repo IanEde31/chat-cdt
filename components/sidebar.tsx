@@ -52,8 +52,8 @@ export function Sidebar({
     ...(isAdmin
       ? [{ href: '/admin/users', label: 'Usuários', icon: Shield }]
       : []),
+    { href: '/reports', label: 'Relatórios', icon: BarChart3 },
     { href: '#filas', label: 'Filas', icon: ListTodo, soon: true },
-    { href: '#relatorios', label: 'Relatórios', icon: BarChart3, soon: true },
   ]
 
   return (
