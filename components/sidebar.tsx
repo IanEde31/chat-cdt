@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   BarChart3,
-  Hexagon,
   LayoutTemplate,
   ListTodo,
   LogOut,
@@ -56,7 +55,13 @@ export function Sidebar({
       {/* Brand */}
       <div className="px-[18px] pb-3.5 pt-[18px]">
         <div className="flex items-center gap-[7px]">
-          <Hexagon className="size-4 fill-accent/20 text-accent" aria-hidden />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/bee.gif"
+            alt=""
+            aria-hidden
+            className="size-4 shrink-0 object-contain"
+          />
           <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.18em] text-accent">
             7Bee.AI · Chat-CDT
           </span>

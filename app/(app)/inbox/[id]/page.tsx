@@ -12,23 +12,41 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Debtor/cobrança context for the right panel. Comes from the read-only,
- * unit-scoped RPC `chat_debtor_context` (migration 0007) — never a direct
- * read of the n8n `clientes_cobranca_*` tables.
+ * unit-scoped RPC `chat_debtor_context` (migration 0008), which returns a
+ * single JSONB object — never a direct read of the n8n tables. Money fields
+ * are already in REAIS (the source tables store cents) and arrive as numbers.
  */
+export type DebtorPaymentLink = {
+  valor: number | null
+  status: string | null
+  pix_copia_cola: string | null
+  link: string | null
+  gerado_em: string | null
+  expira_em: string | null
+}
+
+export type DebtorPayment = {
+  valor: number | null
+  data: string | null
+  forma: string | null
+  baixa_realizada: boolean | null
+}
+
 export type DebtorContext = {
   matched: boolean
-  debtor_name: string | null
-  matricula: string | null
-  valor_inadimplente: number | null
-  status: string | null
-  regua: string | null
-  disparos: number | null
-  disparos_equipe: number | null
-  pagamento_feito: boolean | null
-  link_pagamento: string | null
-  data_pagamento: string | null
-  data_ultima_mensagem: string | null
-  updated_at: string | null
+  ambiguous?: boolean
+  name?: string | null
+  matricula?: string | null
+  valor_aberto?: number | null
+  status?: string | null
+  regua?: string | null
+  tentativas?: number | null
+  pagamento_feito?: boolean | null
+  atualizado_em?: string | null
+  ultimo_link?: DebtorPaymentLink | null
+  ultimo_pagamento?: DebtorPayment | null
+  total_pago?: number | null
+  qtd_pagamentos?: number | null
 }
 
 /**
@@ -164,17 +182,17 @@ export default async function ThreadPage({
     mediaUrlMap[m.id] = { url, pending: false }
   }
 
-  // Debtor/cobrança context (read-only, unit-scoped RPC). Failures degrade to
-  // "no match" — the panel falls back to honest conversation-only context.
+  // Debtor/cobrança context (read-only, unit-scoped RPC → single JSONB object).
+  // Failures degrade to null — the panel shows honest conversation-only context.
   let debtor: DebtorContext | null = null
-  const { data: debtorRows, error: debtorErr } = await supabase.rpc(
+  const { data: debtorData, error: debtorErr } = await supabase.rpc(
     'chat_debtor_context',
     { p_conversation_id: id },
   )
   if (debtorErr) {
     console.error('[inbox/[id]] debtor context error', debtorErr)
-  } else if (Array.isArray(debtorRows) && debtorRows.length > 0) {
-    debtor = debtorRows[0] as DebtorContext
+  } else if (debtorData) {
+    debtor = debtorData as DebtorContext
   }
 
   return (

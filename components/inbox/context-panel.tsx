@@ -1,23 +1,26 @@
 'use client'
 
 import type { CSSProperties, ReactNode } from 'react'
-import { BadgeCheck, CircleDollarSign, ExternalLink } from 'lucide-react'
+import {
+  AlertTriangle,
+  BadgeCheck,
+  Copy,
+  ExternalLink,
+  Receipt,
+} from 'lucide-react'
+import { toast } from 'sonner'
 
 import type {
   ConversationView,
   DebtorContext,
+  DebtorPaymentLink,
 } from '@/app/(app)/inbox/[id]/page'
+import { HANDOFF_LABEL } from '@/app/(app)/inbox/list-data'
 import { formatBRL } from '@/lib/format/currency'
 import { formatWaId } from '@/lib/format/phone'
 import { windowRemaining } from '@/lib/format/time'
 import { unitColor } from '@/lib/unit-colors'
 import { cn } from '@/lib/utils'
-
-const HANDOFF_LABEL: Record<string, string> = {
-  payment_re_register: 'Recadastro de pagamento',
-  cancel: 'Cancelamento',
-  other_support: 'Suporte',
-}
 
 const ROUTING_LABEL: Record<string, string> = {
   ai: 'IA (bot)',
@@ -42,9 +45,7 @@ export function ContextPanel({
   const unitSeed = conversation.unit?.id ?? conversation.unit_id
   const uc = unitSeed ? unitColor(unitSeed) : null
   const unitName =
-    conversation.unit?.name ||
-    conversation.unit?.code?.toUpperCase() ||
-    null
+    conversation.unit?.name || conversation.unit?.code?.toUpperCase() || null
 
   const avatarStyle: CSSProperties = uc
     ? { backgroundColor: uc.bg, borderColor: uc.border, color: uc.fg }
@@ -55,8 +56,6 @@ export function ContextPanel({
       }
 
   const matched = !!debtor?.matched
-  const attempts =
-    (debtor?.disparos ?? 0) + (debtor?.disparos_equipe ?? 0)
   const win = windowRemaining(conversation.customer_window_expires_at)
 
   return (
@@ -64,7 +63,7 @@ export function ContextPanel({
       {/* Identity */}
       <div className="flex flex-col items-center gap-2 px-5 pb-3.5 pt-5 text-center">
         <div
-          className="flex size-[52px] items-center justify-center rounded-full border text-[17px] font-bold"
+          className="flex size-[52px] items-center justify-center rounded-full border-[1.5px] text-[17px] font-bold"
           style={avatarStyle}
           aria-hidden
         >
@@ -84,7 +83,7 @@ export function ContextPanel({
             style={{ borderColor: uc.border, color: uc.fg }}
           >
             <span
-              className="size-1.5 rounded-full"
+              className="size-[5px] rounded-full"
               style={{ backgroundColor: uc.solid }}
               aria-hidden
             />
@@ -95,7 +94,7 @@ export function ContextPanel({
 
       {/* Cobrança */}
       {matched && debtor ? (
-        <DebtSection debtor={debtor} attempts={attempts} />
+        <DebtSection debtor={debtor} />
       ) : (
         <div className="border-b border-border px-5 pb-4 text-center">
           <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
@@ -127,9 +126,6 @@ export function ContextPanel({
           value={win.expired ? 'Fora da janela' : win.label}
           tone={win.expired ? 'danger' : undefined}
         />
-        {conversation.contact?.crm_external_id && (
-          <Fact label="CRM" value={conversation.contact.crm_external_id} />
-        )}
       </Section>
 
       {/* Internal note placeholder — feature pending a notes table */}
@@ -145,20 +141,23 @@ export function ContextPanel({
   )
 }
 
-function DebtSection({
-  debtor,
-  attempts,
-}: {
-  debtor: DebtorContext
-  attempts: number
-}) {
+function DebtSection({ debtor }: { debtor: DebtorContext }) {
   const paid = !!debtor.pagamento_feito
-  const value = debtor.valor_inadimplente
+  const value = debtor.valor_aberto ?? null
 
   return (
     <>
       {/* Headline */}
       <div className="border-b border-border px-5 pb-4 text-center">
+        {debtor.ambiguous && (
+          <div className="mb-3 flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-left">
+            <AlertTriangle className="mt-px size-3 shrink-0 text-amber-400" />
+            <span className="text-[10.5px] leading-snug text-amber-300">
+              Múltiplos cadastros neste telefone — confirme a matrícula.
+            </span>
+          </div>
+        )}
+
         {paid ? (
           <div className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-accent">
             <BadgeCheck className="size-3.5" />
@@ -172,10 +171,9 @@ function DebtSection({
             <p className="mt-1 text-[28px] font-extrabold leading-none tracking-[-0.02em] tabular-nums text-foreground">
               {formatBRL(value)}
             </p>
-            {debtor.status && (
+            {(debtor.status || debtor.regua) && (
               <p className="mt-1.5 font-mono text-[11px] capitalize text-amber-400">
-                {debtor.status}
-                {debtor.regua ? ` · ${debtor.regua}` : ''}
+                {[debtor.status, debtor.regua].filter(Boolean).join(' · ')}
               </p>
             )}
           </>
@@ -186,41 +184,145 @@ function DebtSection({
         )}
       </div>
 
-      {/* Facts */}
+      {/* Cadastro */}
       <Section label="Cadastro de cobrança">
         {debtor.matricula && (
           <Fact label="Matrícula" value={debtor.matricula} mono />
         )}
-        {debtor.status && !debtor.pagamento_feito && (
-          <Fact label="Status" value={cap(debtor.status)} />
-        )}
+        {debtor.status && !paid && <Fact label="Status" value={cap(debtor.status)} />}
         {debtor.regua && <Fact label="Régua" value={debtor.regua} />}
-        <Fact label="Tentativas de contato" value={String(Math.round(attempts))} mono />
-        {debtor.data_ultima_mensagem && (
-          <Fact label="Última cobrança" value={debtor.data_ultima_mensagem} mono />
-        )}
-        {debtor.pagamento_feito && debtor.data_pagamento && (
-          <Fact label="Pago em" value={fmtDate(debtor.data_pagamento)} mono />
-        )}
+        <Fact
+          label="Tentativas de contato"
+          value={String(Math.round(debtor.tentativas ?? 0))}
+          mono
+        />
       </Section>
 
-      {/* Actions — only real ones */}
-      {debtor.link_pagamento && (
-        <Section label="Ações">
-          <a
-            href={debtor.link_pagamento}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group flex items-center gap-2 py-1.5 text-[13px] text-accent transition-colors hover:text-accent/80"
-          >
-            <CircleDollarSign className="size-4 shrink-0" />
-            <span className="flex-1">Abrir link de pagamento</span>
-            <ExternalLink className="size-3.5 text-muted-foreground transition-colors group-hover:text-accent" />
-          </a>
+      {/* Link de pagamento */}
+      {debtor.ultimo_link && (
+        <PaymentLinkSection link={debtor.ultimo_link} />
+      )}
+
+      {/* Pagamentos */}
+      {(debtor.qtd_pagamentos ?? 0) > 0 && (
+        <Section label="Pagamentos">
+          {debtor.ultimo_pagamento && (
+            <Fact
+              label="Último"
+              value={`${formatBRL(debtor.ultimo_pagamento.valor)}${
+                debtor.ultimo_pagamento.forma
+                  ? ` · ${debtor.ultimo_pagamento.forma}`
+                  : ''
+              }`}
+            />
+          )}
+          {debtor.ultimo_pagamento?.data && (
+            <Fact label="Em" value={fmtDate(debtor.ultimo_pagamento.data)} mono />
+          )}
+          <Fact
+            label={`Total (${debtor.qtd_pagamentos})`}
+            value={formatBRL(debtor.total_pago)}
+            mono
+          />
         </Section>
       )}
     </>
   )
+}
+
+function PaymentLinkSection({ link }: { link: DebtorPaymentLink }) {
+  const s = statusOf(link)
+
+  function copyPix() {
+    if (!link.pix_copia_cola) return
+    navigator.clipboard
+      .writeText(link.pix_copia_cola)
+      .then(() => toast.success('PIX copia-e-cola copiado'))
+      .catch(() => toast.error('Não foi possível copiar'))
+  }
+
+  return (
+    <div className="border-b border-border px-5 py-3.5">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          Link de pagamento
+        </p>
+        <span
+          className={cn(
+            'rounded-full border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.04em]',
+            s.cls,
+          )}
+        >
+          {s.label}
+        </span>
+      </div>
+
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[12.5px] text-muted-foreground">Valor</span>
+        <span className="font-mono-num text-[13px] font-semibold text-foreground">
+          {formatBRL(link.valor)}
+        </span>
+      </div>
+      {link.gerado_em && (
+        <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+          gerado {fmtDate(link.gerado_em)}
+          {link.expira_em ? ` · expira ${fmtDate(link.expira_em)}` : ''}
+        </div>
+      )}
+
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
+        {link.pix_copia_cola && (
+          <button
+            type="button"
+            onClick={copyPix}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[11.5px] text-foreground transition-colors hover:border-accent/50 hover:text-accent"
+          >
+            <Copy className="size-3" />
+            Copiar PIX
+          </button>
+        )}
+        {link.link && (
+          <a
+            href={link.link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[11.5px] text-foreground transition-colors hover:border-accent/50 hover:text-accent"
+          >
+            <ExternalLink className="size-3" />
+            Abrir link
+          </a>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function statusOf(link: DebtorPaymentLink): { label: string; cls: string } {
+  const expired = link.expira_em
+    ? new Date(link.expira_em).getTime() < Date.now()
+    : false
+  const s = (link.status ?? '').toLowerCase()
+  if (s === 'paid')
+    return { label: 'Pago', cls: 'border-accent/30 bg-accent/10 text-accent' }
+  if (s === 'cancelled' || s === 'canceled')
+    return {
+      label: 'Cancelado',
+      cls: 'border-border bg-secondary text-muted-foreground',
+    }
+  if (expired)
+    return {
+      label: 'Expirado',
+      cls: 'border-border bg-secondary text-muted-foreground',
+    }
+  if (s === 'pending')
+    return {
+      label: 'Pendente',
+      cls: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+    }
+  return {
+    label: s || '—',
+    cls: 'border-border bg-secondary text-muted-foreground',
+  }
 }
 
 function Section({ label, children }: { label: string; children: ReactNode }) {
@@ -247,7 +349,9 @@ function Fact({
 }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">
-      <span className="text-[12.5px] text-muted-foreground">{label}</span>
+      <span className="shrink-0 text-[12.5px] text-muted-foreground">
+        {label}
+      </span>
       <span
         className={cn(
           'min-w-0 truncate text-right text-[12px] text-foreground',
