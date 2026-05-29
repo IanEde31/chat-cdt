@@ -102,6 +102,8 @@ type Props = {
   conversation: ConversationView
   userId: string
   initialMediaUrls: Record<string, MediaState>
+  contextOpen?: boolean
+  onToggleContext?: () => void
 }
 
 export function ThreadClient({
@@ -109,6 +111,8 @@ export function ThreadClient({
   conversation,
   userId,
   initialMediaUrls,
+  contextOpen,
+  onToggleContext,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>(initial)
   const [mediaUrls, setMediaUrls] =
@@ -244,7 +248,11 @@ export function ThreadClient({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <ThreadHeader conv={conversation} />
+      <ThreadHeader
+        conv={conversation}
+        contextOpen={contextOpen}
+        onToggleContext={onToggleContext}
+      />
 
       <div
         ref={viewportRef}

@@ -6,9 +6,30 @@ import {
   extractMediaInfo,
 } from '@/lib/storage/media'
 
-import { ThreadClient } from './thread-client'
+import { ThreadPane } from '@/components/inbox/thread-pane'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Debtor/cobrança context for the right panel. Comes from the read-only,
+ * unit-scoped RPC `chat_debtor_context` (migration 0007) — never a direct
+ * read of the n8n `clientes_cobranca_*` tables.
+ */
+export type DebtorContext = {
+  matched: boolean
+  debtor_name: string | null
+  matricula: string | null
+  valor_inadimplente: number | null
+  status: string | null
+  regua: string | null
+  disparos: number | null
+  disparos_equipe: number | null
+  pagamento_feito: boolean | null
+  link_pagamento: string | null
+  data_pagamento: string | null
+  data_ultima_mensagem: string | null
+  updated_at: string | null
+}
 
 /**
  * Shape of a single message row, as we render it. Keep this in sync with
@@ -60,6 +81,7 @@ export type ConversationView = {
       name: string | null
     } | null
   } | null
+  unit: { id: string; code: string; name: string } | null
 }
 
 export default async function ThreadPage({
@@ -85,7 +107,8 @@ export default async function ThreadPage({
         phone:chat_phone_numbers(
           id, phone_number_id, display_phone,
           waba:wabas(id, waba_id, name)
-        )
+        ),
+        unit:units(id, code, name)
       `,
     )
     .eq('id', id)
@@ -141,12 +164,26 @@ export default async function ThreadPage({
     mediaUrlMap[m.id] = { url, pending: false }
   }
 
+  // Debtor/cobrança context (read-only, unit-scoped RPC). Failures degrade to
+  // "no match" — the panel falls back to honest conversation-only context.
+  let debtor: DebtorContext | null = null
+  const { data: debtorRows, error: debtorErr } = await supabase.rpc(
+    'chat_debtor_context',
+    { p_conversation_id: id },
+  )
+  if (debtorErr) {
+    console.error('[inbox/[id]] debtor context error', debtorErr)
+  } else if (Array.isArray(debtorRows) && debtorRows.length > 0) {
+    debtor = debtorRows[0] as DebtorContext
+  }
+
   return (
-    <ThreadClient
+    <ThreadPane
       initial={messages}
       conversation={conversation}
       userId={user.id}
       initialMediaUrls={mediaUrlMap}
+      debtor={debtor}
     />
   )
 }

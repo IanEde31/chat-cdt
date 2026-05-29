@@ -97,3 +97,50 @@ export async function closeConversation(
   revalidatePath('/inbox')
   redirect('/inbox')
 }
+
+/**
+ * Bulk variants for the list's selection bar. Single UPDATE with `.in(...)`;
+ * no redirect (the operator stays in the list). Realtime propagates the
+ * status/assignment change back into the workspace.
+ */
+export async function bulkAssignToMe(ids: string[]): Promise<ActionResult> {
+  if (ids.length === 0) return {}
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { error: 'unauthorized' }
+
+  const { error } = await supabase
+    .from('conversations')
+    .update({ routing: 'human', assigned_operator_id: user.id })
+    .in('id', ids)
+
+  if (error) {
+    console.error('[bulkAssignToMe] update failed', error)
+    return { error: error.message }
+  }
+  revalidatePath('/inbox')
+  return {}
+}
+
+export async function bulkClose(ids: string[]): Promise<ActionResult> {
+  if (ids.length === 0) return {}
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { error: 'unauthorized' }
+
+  const { error } = await supabase
+    .from('conversations')
+    .update({ status: 'closed', closed_at: new Date().toISOString() })
+    .in('id', ids)
+
+  if (error) {
+    console.error('[bulkClose] update failed', error)
+    return { error: error.message }
+  }
+  revalidatePath('/inbox')
+  return {}
+}

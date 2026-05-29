@@ -2,10 +2,17 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutTemplate, LogOut, MessageSquare } from 'lucide-react'
+import {
+  BarChart3,
+  Hexagon,
+  LayoutTemplate,
+  ListTodo,
+  LogOut,
+  MessageCircle,
+} from 'lucide-react'
 
 import { signOut } from '@/app/login/actions'
-import { Button } from '@/components/ui/button'
+import { UnitSelect } from '@/components/inbox/unit-select'
 import { cn } from '@/lib/utils'
 
 type SidebarUser = {
@@ -13,77 +20,146 @@ type SidebarUser = {
   name: string
 }
 
-const NAV_ITEMS = [
-  { href: '/inbox', label: 'Inbox', icon: MessageSquare },
-  { href: '/templates', label: 'Templates', icon: LayoutTemplate },
-] as const
+type NavItem = {
+  href: string
+  label: string
+  icon: typeof MessageCircle
+  badge?: number
+  soon?: boolean
+}
 
-export function Sidebar({ user }: { user: SidebarUser | null }) {
+export function Sidebar({
+  user,
+  waitingCount = 0,
+}: {
+  user: SidebarUser | null
+  waitingCount?: number
+}) {
   const pathname = usePathname()
   const displayName = user?.name ?? 'Operador'
   const initial = displayName.trim().charAt(0).toUpperCase() || 'O'
 
+  const nav: NavItem[] = [
+    {
+      href: '/inbox',
+      label: 'Inbox',
+      icon: MessageCircle,
+      badge: waitingCount > 0 ? waitingCount : undefined,
+    },
+    { href: '/templates', label: 'Templates', icon: LayoutTemplate },
+    { href: '#filas', label: 'Filas', icon: ListTodo, soon: true },
+    { href: '#relatorios', label: 'Relatórios', icon: BarChart3, soon: true },
+  ]
+
   return (
-    <aside className="relative flex h-screen w-64 shrink-0 flex-col overflow-hidden border-r border-border bg-card">
-      <div className="elegant-divider px-5 py-6">
-        <span className="block font-mono text-[10px] uppercase tracking-[0.25em] text-accent">
-          7Bee.AI · CHAT-CDT
-        </span>
-        <span className="mt-1 block gradient-text text-base font-semibold tracking-tight">
+    <aside className="relative flex h-screen w-[220px] shrink-0 flex-col overflow-hidden border-r border-border bg-background">
+      {/* Brand */}
+      <div className="px-[18px] pb-3.5 pt-[18px]">
+        <div className="flex items-center gap-[7px]">
+          <Hexagon className="size-4 fill-accent/20 text-accent" aria-hidden />
+          <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.18em] text-accent">
+            7Bee.AI · Chat-CDT
+          </span>
+        </div>
+        <div className="mt-2 text-[17px] font-bold tracking-[-0.02em] text-foreground">
           Atendimento
-        </span>
+        </div>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-1 px-3 py-5">
-        <span className="px-3 mb-2 text-[10px] font-mono uppercase tracking-[1.5px] text-muted-foreground">
+      {/* Unit selector — single source of the unit filter */}
+      <div className="px-3 pb-3.5">
+        <UnitSelect />
+      </div>
+
+      {/* Navigation */}
+      <nav className="px-3">
+        <span className="block px-2 pb-1.5 pt-2 font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           Navegação
         </span>
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon
-          const active =
-            pathname === item.href || pathname.startsWith(`${item.href}/`)
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                active
-                  ? 'bg-accent text-accent-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
-              )}
-            >
-              <Icon className="size-4 shrink-0" />
-              <span>{item.label}</span>
-            </Link>
-          )
-        })}
+        <div className="flex flex-col gap-0.5">
+          {nav.map((item) => {
+            const Icon = item.icon
+            const active =
+              !item.soon &&
+              (pathname === item.href ||
+                pathname.startsWith(`${item.href}/`))
+
+            if (item.soon) {
+              return (
+                <span
+                  key={item.href}
+                  title="Em breve"
+                  className="flex cursor-default items-center gap-2.5 rounded-[9px] px-[11px] py-[9px] text-[13.5px] font-medium text-muted-foreground/45"
+                >
+                  <Icon className="size-4 shrink-0" />
+                  <span className="flex-1">{item.label}</span>
+                  <span className="font-mono text-[8px] uppercase tracking-[0.1em] text-muted-foreground/40">
+                    em breve
+                  </span>
+                </span>
+              )
+            }
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  'flex items-center gap-2.5 rounded-[9px] px-[11px] py-[9px] text-[13.5px] transition-colors',
+                  active
+                    ? 'bg-accent font-semibold text-accent-foreground'
+                    : 'font-medium text-muted-foreground hover:bg-secondary hover:text-foreground',
+                )}
+              >
+                <Icon className="size-4 shrink-0" />
+                <span className="flex-1">{item.label}</span>
+                {item.badge ? (
+                  <span
+                    className={cn(
+                      'font-mono text-[10px] font-bold tabular-nums',
+                      active ? 'text-accent-foreground/65' : 'text-muted-foreground',
+                    )}
+                  >
+                    {item.badge}
+                  </span>
+                ) : null}
+              </Link>
+            )
+          })}
+        </div>
       </nav>
 
-      <div className="mt-auto border-t border-border px-4 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-semibold text-foreground">
+      <div className="flex-1" />
+
+      {/* User footer */}
+      <div className="border-t border-border px-4 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <div className="flex size-[30px] shrink-0 items-center justify-center rounded-full border border-accent/30 bg-accent/12 text-xs font-bold text-accent">
             {initial}
           </div>
           <div className="min-w-0 flex-1">
-            <span className="block truncate text-sm text-foreground">
+            <div className="truncate text-[13px] font-semibold text-foreground">
               {displayName}
-            </span>
-            <span className="block truncate text-xs text-muted-foreground">
-              Conectado
-            </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span
+                className="live-dot size-[5px] rounded-full bg-accent"
+                aria-hidden
+              />
+              <span className="font-mono text-[10px] text-accent">
+                Conectado
+              </span>
+            </div>
           </div>
         </div>
         <form action={signOut}>
-          <Button
+          <button
             type="submit"
-            variant="ghost"
-            size="sm"
-            className="mt-3 w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
+            className="mt-3 flex items-center gap-2 text-[12.5px] text-muted-foreground transition-colors hover:text-destructive"
           >
-            <LogOut className="size-4" />
+            <LogOut className="size-3.5" />
             Sair
-          </Button>
+          </button>
         </form>
       </div>
     </aside>
