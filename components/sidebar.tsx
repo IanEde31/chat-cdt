@@ -8,6 +8,7 @@ import {
   ListTodo,
   LogOut,
   MessageCircle,
+  Shield,
 } from 'lucide-react'
 
 import { signOut } from '@/app/login/actions'
@@ -30,9 +31,11 @@ type NavItem = {
 export function Sidebar({
   user,
   waitingCount = 0,
+  isAdmin = false,
 }: {
   user: SidebarUser | null
   waitingCount?: number
+  isAdmin?: boolean
 }) {
   const pathname = usePathname()
   const displayName = user?.name ?? 'Operador'
@@ -46,6 +49,9 @@ export function Sidebar({
       badge: waitingCount > 0 ? waitingCount : undefined,
     },
     { href: '/templates', label: 'Templates', icon: LayoutTemplate },
+    ...(isAdmin
+      ? [{ href: '/admin/users', label: 'Usuários', icon: Shield }]
+      : []),
     { href: '#filas', label: 'Filas', icon: ListTodo, soon: true },
     { href: '#relatorios', label: 'Relatórios', icon: BarChart3, soon: true },
   ]

@@ -4,6 +4,7 @@ import { PushSetup } from '@/components/push-setup'
 import { Sidebar } from '@/components/sidebar'
 import { UnitFilterProvider, type UnitOption } from '@/components/inbox/unit-filter'
 import { Toaster } from '@/components/ui/sonner'
+import { getIsAdmin } from '@/lib/auth/admin'
 import { createClient } from '@/lib/supabase/server'
 
 export default async function AppLayout({
@@ -47,6 +48,9 @@ export default async function AppLayout({
   }
   const units: UnitOption[] = (unitRows ?? []) as UnitOption[]
 
+  // Admin gate for the "Usuários" nav link (role-based via chat_is_admin()).
+  const isAdmin = await getIsAdmin(supabase)
+
   // Lightweight "aguardando" badge for the sidebar nav (RLS-scoped to the
   // operator's units). Server-rendered; the live count lives in the list.
   const { count: waitingCount } = await supabase
@@ -59,7 +63,11 @@ export default async function AppLayout({
   return (
     <UnitFilterProvider units={units}>
       <div className="flex h-screen w-full overflow-hidden bg-background">
-        <Sidebar user={sidebarUser} waitingCount={waitingCount ?? 0} />
+        <Sidebar
+          user={sidebarUser}
+          waitingCount={waitingCount ?? 0}
+          isAdmin={isAdmin}
+        />
         <main className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
           <PushSetup />
           {children}
